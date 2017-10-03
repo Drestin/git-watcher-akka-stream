@@ -1,5 +1,5 @@
 package drestin.akkastream.gitwatcher
-import java.io.{File, InputStream}
+import java.io.{ByteArrayInputStream, File, InputStream}
 
 import org.eclipse.jgit.lib.{ObjectId, Repository}
 
@@ -17,27 +17,27 @@ final class FileChange private[gitwatcher] (private val repo: Repository,
                                             private val objectId: Option[ObjectId] = None) {
 
   /**
-    * Opens an InputStream streaming the new content of the file.
+    * Opens an [[InputStream]] streaming the new content of the file.
     *
-    * It is left to the user to close the stream after use.
-    * Must not be used if the file has been deleted ([[changeStatus]] is [[FileChange.ChangeStatus.Deleted]] and
-    * [[stillExists{}]] returns false.
+    * It is left to the user to close it after use.
+    * If the file was deleted, the returned stream will be empty.
     *
-    * @return the InputStream of the new content of the file.
-    * @throws java.lang.IllegalStateException if the file no longer exists.
+    * @return An [[InputStream]] of the new content of the file.
     */
-  def openContentStream(): InputStream = {
-    if (!stillExists()) {
-      throw new IllegalStateException("Trying to read the content of a deleted file.")
+  def openContentsStream(): InputStream = {
+    if (stillExists) {
+      repo.open(objectId.get).openStream()
+    } else {
+      new ByteArrayInputStream(Array.emptyByteArray)
     }
-
-    repo.open(objectId.get).openStream()
   }
 
   /**
     * Returns true if the file still exists, and its contents be accessed
     */
-  def stillExists() : Boolean = changeStatus != FileChange.ChangeStatus.Deleted
+  def stillExists : Boolean = changeStatus != FileChange.ChangeStatus.Deleted
+
+  override def toString: String = s"FileChange[$changeStatus $relativePath]"
 }
 
 object FileChange {

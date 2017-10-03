@@ -48,10 +48,10 @@ class FileChangeSuite extends FlatSpec with BeforeAndAfter with Matchers {
   "The FileChange of a deleted file" should "not be readable" in {
     val deletedFileChange = new FileChange(git.getRepository, new File("config.txt"), FileChange.ChangeStatus.Deleted)
 
-    deletedFileChange.stillExists() shouldBe false
-    an [IllegalStateException] shouldBe thrownBy {
-      deletedFileChange.openContentStream()
-    }
+    deletedFileChange.stillExists shouldBe false
+    val stream = deletedFileChange.openContentsStream()
+    stream.available() shouldBe 0
+    stream.close()
   }
 
   "The FileChange of an existing file" should "stream all the contents of the related file" in {
@@ -60,8 +60,8 @@ class FileChangeSuite extends FlatSpec with BeforeAndAfter with Matchers {
                                             FileChange.ChangeStatus.Modified,
                                             Some(fileOblectId))
 
-    existingFileChange.stillExists() shouldBe true
-    val stream = existingFileChange.openContentStream()
+    existingFileChange.stillExists shouldBe true
+    val stream = existingFileChange.openContentsStream()
     val textStream = new BufferedReader(new InputStreamReader(stream))
 
     textStream.readLine() shouldBe "123"
@@ -81,11 +81,11 @@ class FileChangeSuite extends FlatSpec with BeforeAndAfter with Matchers {
       FileChange.ChangeStatus.Unchanged,
       Some(fileOblectId))
 
-    fileChange1.stillExists() shouldBe true
-    fileChange2.stillExists() shouldBe true
+    fileChange1.stillExists shouldBe true
+    fileChange2.stillExists shouldBe true
 
-    val stream1 = fileChange1.openContentStream()
-    val stream2 = fileChange2.openContentStream()
+    val stream1 = fileChange1.openContentsStream()
+    val stream2 = fileChange2.openContentsStream()
     val textStream1 = new BufferedReader(new InputStreamReader(stream1))
     val textStream2 = new BufferedReader(new InputStreamReader(stream2))
 
