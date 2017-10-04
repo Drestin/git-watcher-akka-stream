@@ -3,6 +3,8 @@ import java.io.{ByteArrayInputStream, File, InputStream}
 
 import org.eclipse.jgit.lib.{ObjectId, Repository}
 
+import scala.io.Source
+
 /**
   * The status of a file since the last revision.
   *
@@ -30,6 +32,23 @@ final class FileChange private[gitwatcher] (private val repo: Repository,
     } else {
       new ByteArrayInputStream(Array.emptyByteArray)
     }
+  }
+
+  /**
+    * Returns the contents of the pointed file as a collection of lines.
+    *
+    * If the file was deleted, returns an empty collection.
+    */
+  def getTextContents: Iterable[String] = {
+    if (!stillExists) return Iterable.empty
+
+    val reader = repo.open(objectId.get)
+
+    val source = if (reader.isLarge) Source.fromInputStream(reader.openStream()) else Source.fromBytes(reader.getBytes)
+    val contents = source.getLines()
+    source.close()
+
+    contents.toIterable
   }
 
   /**

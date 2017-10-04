@@ -23,15 +23,11 @@ val source: Source[FileChange, NotUsed] = builder.buildWatchOneFile("config.txt"
 ```
 
 The `FileChange` objects contain information on the nature of the change, and provide the unique access to the file as an
-`java.io.InputStream`.
+`java.io.InputStream` or as a list of lines.
 
 The following code prints the contents of the file each time it is changed:
 ```scala
-source.runForeach{ (fileChange) =>
-  val source = Source.fromInputStream(fileChange.openContentsStream())
-  println(source.mkString)
-  source.close()
-}
+source.runForeach{ (fileChange) => fileChange.getTextContents.foreach(println) }
 ```
 
 ## Some technical details

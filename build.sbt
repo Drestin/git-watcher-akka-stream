@@ -4,8 +4,6 @@ version := "0.1"
 
 scalaVersion := "2.12.3"
 
-parallelExecution in Test := false
-
 val akkaVersion = "2.5.4"
 
 // Akka-Stream

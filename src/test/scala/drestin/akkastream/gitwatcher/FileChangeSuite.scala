@@ -4,82 +4,62 @@ import java.io.{BufferedReader, File, InputStreamReader}
 import java.nio.file.Files
 
 import org.eclipse.jgit.api.Git
-import org.eclipse.jgit.lib.{Constants, ObjectId}
-import org.eclipse.jgit.treewalk.TreeWalk
-import org.eclipse.jgit.treewalk.filter.PathFilter
+import org.eclipse.jgit.lib.ObjectId
 import org.scalatest.{BeforeAndAfter, FlatSpec, Matchers}
 
 import scala.collection.JavaConverters._
 
 class FileChangeSuite extends FlatSpec with BeforeAndAfter with Matchers {
   var git: Git = _
-  val config = "dir/config.txt"
-  var fileOblectId: ObjectId = _
+  val configPath = "dir/config.txt"
+  var fileObjectId: ObjectId = _
 
   before {
-    val root = Files.createTempDirectory("repo").toFile
-    git = Git.init()
-      .setDirectory(root)
-      .call()
+    git = TestUtils.initTempGit()
+    val root = git.getRepository.getDirectory.getParentFile
 
     Files.createDirectory(new File(root, "dir").toPath)
-    Files.write(new File(root, config).toPath, Seq("123", "éĕēȩ").asJava)
+    Files.write(new File(root, configPath).toPath, Seq("123", "éĕēȩ").asJava)
 
     git.add()
-      .addFilepattern(config)
+      .addFilepattern(configPath)
       .call()
     git.commit()
       .setMessage("commit")
       .call()
 
-    val repo = git.getRepository
-    val commit = repo.parseCommit(repo.resolve(Constants.HEAD))
-
-    // All this stuff to get the ObjectId of the file...
-    val treeWalk = new TreeWalk(repo)
-    treeWalk.addTree(commit.getTree)
-    treeWalk.setRecursive(true)
-    treeWalk.setFilter(PathFilter.create(config))
-    treeWalk.next()
-    fileOblectId = treeWalk.getObjectId(0)
-    treeWalk.close()
+    fileObjectId = TestUtils.findFileObjectId(git.getRepository, configPath)
   }
 
-  "The FileChange of a deleted file" should "not be readable" in {
+  "A FileChange" should "have no contents if the file was destroyed" in {
     val deletedFileChange = new FileChange(git.getRepository, new File("config.txt"), FileChange.ChangeStatus.Deleted)
 
     deletedFileChange.stillExists shouldBe false
     val stream = deletedFileChange.openContentsStream()
     stream.available() shouldBe 0
     stream.close()
+    deletedFileChange.getTextContents.isEmpty shouldBe true
   }
 
-  "The FileChange of an existing file" should "stream all the contents of the related file" in {
+  it should "contain the file contents if the file exists (supporting UTF-8)" in {
     val existingFileChange = new FileChange(git.getRepository,
-                                            new File(config),
+                                            new File(configPath),
                                             FileChange.ChangeStatus.Modified,
-                                            Some(fileOblectId))
+                                            Some(fileObjectId))
 
     existingFileChange.stillExists shouldBe true
-    val stream = existingFileChange.openContentsStream()
-    val textStream = new BufferedReader(new InputStreamReader(stream))
-
-    textStream.readLine() shouldBe "123"
-    textStream.readLine() shouldBe "éĕēȩ"
-    // End of the stream
-    textStream.readLine() shouldBe null
-    textStream.close()
+    existingFileChange.getTextContents.toList shouldBe List("123", "éĕēȩ")
   }
 
-  "A file" can "be read from 2 FileChanges concurrently" in {
+  it can "stream the contents concurrently with another FileChange" in {
     val fileChange1 = new FileChange(git.getRepository,
-      new File(config),
+      new File(configPath),
       FileChange.ChangeStatus.Created,
-      Some(fileOblectId))
+      Some(fileObjectId))
     val fileChange2 = new FileChange(git.getRepository,
-      new File(config),
+      new File(configPath),
       FileChange.ChangeStatus.Unchanged,
-      Some(fileOblectId))
+      Some(fileObjectId))
 
     fileChange1.stillExists shouldBe true
     fileChange2.stillExists shouldBe true
