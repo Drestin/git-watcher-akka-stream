@@ -5,10 +5,9 @@ import java.nio.file.Files
 
 import akka.stream.stage.{GraphStage, OutHandler, TimerGraphStageLogic}
 import akka.stream.{Attributes, Outlet, SourceShape}
-import drestin.akkastream.gitwatcher
+import drestin.akkastream.gitwatcher.GitSourceStage.{WatchAll, WatchPolicy, WatchSome}
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.errors.TransportException
-import org.eclipse.jgit.diff
 import org.eclipse.jgit.diff.DiffEntry
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.treewalk._
@@ -21,8 +20,9 @@ import scala.collection.mutable
   *
   * It produces [[FileChange]]s when the tracked branch changes.
   * @param builder The builder use to create this object. It contains every parameters.
+  * @param watchPolicy watch all files or only some.
   */
-private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder)
+private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder, val watchPolicy: WatchPolicy)
   extends GraphStage[SourceShape[Iterable[FileChange]]] {
 
   private val out = Outlet[Iterable[FileChange]]("GitSourceStage.out")
@@ -70,7 +70,7 @@ private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder)
         }
         fetch()
         // The ticks to check if the remote changed
-        schedulePeriodically(Unit, builder.delayBetweenUpdates)
+        scheduleOnce(Unit, builder.delayBetweenUpdates)
       }
 
       override def postStop(): Unit = {
@@ -114,8 +114,10 @@ private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder)
           // compare commits Ids
           if (newCommit == null) throw new IllegalStateException("The tracked branch no longer exists")
         } catch {
-          case _:TransportException =>
+          case _:TransportException => // network exception
           case e: Exception => fail(out, e)
+        } finally {
+          scheduleOnce(Unit, builder.delayBetweenUpdates)
         }
       }
 
@@ -134,9 +136,9 @@ private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder)
             // We send the FileChanges
             push(out, fileChanges)
             downstreamWaiting = false
+            // we only update the commit if we send something
+            lastSentCommit = newCommit
           }
-          // In both cases we update the current commit
-          lastSentCommit = newCommit
         } catch {
           case e: Exception => fail(out, e)
         }
@@ -168,9 +170,9 @@ private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder)
 
         // if some files are different, push the list of FileChanges
         if (diffResults.isEmpty) {
-          Seq.empty[FileChange]
+          Seq.empty
         } else {
-          val fileChanges = diffResults.map { (diffEntry) => {
+          val allFileChanges = diffResults.map { (diffEntry) => {
             val changeStatus = diffEntry.getChangeType match {
               case DiffEntry.ChangeType.DELETE => FileChange.ChangeStatus.Deleted
               case DiffEntry.ChangeType.MODIFY => FileChange.ChangeStatus.Modified
@@ -186,25 +188,32 @@ private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder)
             }
           }
 
-          if (builder.onlySendModified) {
-            fileChanges
+          // filter on the watched files
+          val watchedFileChanges = watchPolicy match {
+            case WatchAll => allFileChanges
+            case WatchSome(watchedFiles) => allFileChanges.filter((fc) => watchedFiles.contains(fc.relativePath))
+          }
+
+          if (watchedFileChanges.isEmpty || builder.onlySendModified) {
+            // we don't need to list the unchanged files.
+            watchedFileChanges
           } else {
             // We also want the unmodified files: add the files in the tree not in the diffs
-            val unchangedFiles = listFilesInTree(newTree)
-              .filterNot { case (f, _) => fileChanges.exists((fc) => fc.relativePath == f) }
+            val unchangedWatchedFiles = listWatchedFilesInTree(newTree)
+              .filterNot { case (f, _) => allFileChanges.exists((fc) => fc.relativePath == f) }
               .map { case (f, id) =>
                 new FileChange(repo, f, FileChange.ChangeStatus.Unchanged, Some(id))
               }
 
-            fileChanges ++ unchangedFiles
+            watchedFileChanges ++ unchangedWatchedFiles
           }
         }
       }
 
       /**
-        * Return a list of every files in the given tree iterator.
+        * Return a list of every watched files in the given tree iterator.
         */
-      private def listFilesInTree(treeIterator: AbstractTreeIterator): Iterable[(File, ObjectId)] = {
+      private def listWatchedFilesInTree(treeIterator: AbstractTreeIterator): Iterable[(File, ObjectId)] = {
         treeIterator.reset()
         val treeWalk = new TreeWalk(git.getRepository)
         treeWalk.setRecursive(true)
@@ -212,11 +221,24 @@ private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder)
 
         val files = mutable.Buffer[(File, ObjectId)]()
         while(treeWalk.next()) {
-          files.append((new File(treeWalk.getPathString), treeWalk.getObjectId(0)))
+          val path = new File(treeWalk.getPathString)
+          val addFile = watchPolicy match {
+            case WatchAll => true
+            case WatchSome(watchedFiles) => watchedFiles.contains(path)
+          }
+
+          if (addFile) files.append((path, treeWalk.getObjectId(0)))
         }
 
         files
       }
     }
 
+}
+
+private[gitwatcher] object GitSourceStage {
+  sealed trait WatchPolicy
+
+  case object WatchAll extends WatchPolicy
+  final case class WatchSome(watchedFiles: Set[File]) extends WatchPolicy
 }

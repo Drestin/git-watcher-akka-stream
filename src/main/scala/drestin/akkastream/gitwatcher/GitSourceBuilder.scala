@@ -4,6 +4,7 @@ import java.io.File
 
 import akka.NotUsed
 import akka.stream.scaladsl.Source
+import drestin.akkastream.gitwatcher.GitSourceStage.{WatchAll, WatchSome}
 
 import scala.concurrent.duration._
 
@@ -42,10 +43,7 @@ final case class GitSourceBuilder(
     * @return An Akka-Stream Source producing a [[FileChange]] each time the file changes.
     */
   def buildWatchOneFile(relativePath: File): Source[FileChange, NotUsed] = {
-    Source.fromGraph(new GitSourceStage(copy(onlySendModified = true)))
-      .mapConcat[FileChange] { (fileChanges) =>
-        fileChanges.find(_.relativePath == relativePath).toList
-      }
+    Source.fromGraph(new GitSourceStage(copy(onlySendModified = true), WatchSome(Set(relativePath)))).mapConcat(_.toList)
   }
 
   /**
@@ -54,7 +52,7 @@ final case class GitSourceBuilder(
     * @return An Akka-Stream Source producing a collection of [[FileChange]]s each time at least one of the files
     *         is modified.
     */
-  def buildWatchAllFiles(): Source[Iterable[FileChange], NotUsed] = Source.fromGraph(new GitSourceStage(this))
+  def buildWatchAllFiles(): Source[Iterable[FileChange], NotUsed] = Source.fromGraph(new GitSourceStage(this, WatchAll))
 
   /**
     * Build a watcher on some files of the repository.
@@ -65,9 +63,7 @@ final case class GitSourceBuilder(
     *         files is modified
     */
   def buildWatchSomeFiles(watchedFiles: Set[File]): Source[Iterable[FileChange], NotUsed] = {
-    Source.fromGraph(new GitSourceStage(this))
-      .map(_.filter((fileChange) => watchedFiles.contains(fileChange.relativePath)))
-      .filter(_.nonEmpty)
+    Source.fromGraph(new GitSourceStage(this, WatchSome(watchedFiles)))
   }
 
 }
