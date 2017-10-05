@@ -42,11 +42,11 @@ private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder, val watc
       override def preStart(): Unit = {
         try {
           // The local repository is created for each object
-          val dir = Files.createTempDirectory("gitsource-root.git")
+          val dir = Files.createTempDirectory("gitwatcher")
 
           git = Git.cloneRepository()
             .setURI(builder.repoUrl)
-            .setGitDir(dir.toFile)
+            .setDirectory(dir.toFile)
             .setTransportConfigCallback(builder.authentification)
             // we don't want to work on this repo
             .setBare(true)
@@ -65,7 +65,6 @@ private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder, val watc
 
         } catch {
           // todo manage network exceptions
-          case _: IOException => // retry later
           case e: Exception => fail(out, e)
         }
         fetch()
@@ -114,7 +113,7 @@ private[gitwatcher] class GitSourceStage(val builder: GitSourceBuilder, val watc
           // compare commits Ids
           if (newCommit == null) throw new IllegalStateException("The tracked branch no longer exists")
         } catch {
-          case _:TransportException => // network exception
+          // todo handle network exception
           case e: Exception => fail(out, e)
         } finally {
           scheduleOnce(Unit, builder.delayBetweenUpdates)
